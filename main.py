@@ -5,10 +5,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import MenuButtonWebApp, MenuButtonDefault, WebAppInfo
 from aiohttp import web
 
 import database as db
-from config import BOT_TOKEN, PORT
+from config import BOT_TOKEN, PORT, WEBAPP_URL
 from data.words import WORDS
 from scheduler import setup_scheduler
 from api import build_app
@@ -34,6 +35,16 @@ async def run_bot():
     scheduler.start()
 
     await bot.delete_webhook(drop_pending_updates=True)
+
+    if WEBAPP_URL:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="🎮 Учить", web_app=WebAppInfo(url=WEBAPP_URL))
+        )
+        logging.info("Menu Button установлена на мини-апп")
+    else:
+        await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+        logging.info("WEBAPP_URL не задан — Menu Button не установлена")
+
     await dp.start_polling(bot)
 
 
