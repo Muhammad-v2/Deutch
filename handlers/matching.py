@@ -15,9 +15,9 @@ PAIRS_COUNT = 6
 
 async def start_matching(callback: CallbackQuery, state: FSMContext):
     user = await db.get_user(callback.from_user.id)
-    words = await db.get_due_words(callback.from_user.id, user["level"], limit=PAIRS_COUNT)
+    words = await db.get_due_words(callback.from_user.id, user["levels"], limit=PAIRS_COUNT)
     if len(words) < PAIRS_COUNT:
-        extra = await db.get_random_words(user["level"], -1, n=PAIRS_COUNT - len(words))
+        extra = await db.get_random_words(user["levels"], -1, n=PAIRS_COUNT - len(words))
         words += extra
     words = words[:PAIRS_COUNT]
 

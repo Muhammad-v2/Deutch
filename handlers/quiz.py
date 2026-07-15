@@ -14,12 +14,12 @@ QUIZ_LEN = 8
 
 async def ask_question(callback: CallbackQuery, state: FSMContext):
     user = await db.get_user(callback.from_user.id)
-    words = await db.get_due_words(callback.from_user.id, user["level"], limit=1)
+    words = await db.get_due_words(callback.from_user.id, user["levels"], limit=1)
     if not words:
         await finish_quiz(callback, state)
         return
     word = words[0]
-    distractors = await db.get_random_words(user["level"], word["id"], n=3)
+    distractors = await db.get_random_words(user["levels"], word["id"], n=3)
     if len(distractors) < 3:
         await finish_quiz(callback, state)
         return

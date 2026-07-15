@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from keyboards import main_menu_kb, settings_kb, level_kb
+from keyboards import main_menu_kb, settings_kb, level_multiselect_kb
 from utils import progress_bar
 
 router = Router()
@@ -14,11 +14,12 @@ async def menu_text(user_id: int) -> str:
     u = stats["user"]
     bar = progress_bar(stats["known"], max(stats["total_words"], 1))
     fire = "🔥" if u["streak"] > 0 else "💤"
+    levels_str = ", ".join(u["levels"] or [])
     due_line = f"\n⏰ Слов ждут повторения: <b>{stats['due_now']}</b>" if stats["due_now"] else ""
     return (
         f"<b>🇩🇪 Главное меню</b>\n\n"
         f"{fire} Streak: <b>{u['streak']}</b> дней (рекорд {u['longest_streak']})\n"
-        f"⭐️ XP: <b>{u['xp']}</b> · Уровень словаря: <b>{u['level']}</b>\n"
+        f"⭐️ XP: <b>{u['xp']}</b> · Уровни: <b>{levels_str}</b>\n"
         f"📗 Выучено слов: <b>{stats['known']}</b> / {stats['total_words']}\n"
         f"{bar}"
         f"{due_line}\n\n"
@@ -44,15 +45,16 @@ async def show_stats(callback: CallbackQuery):
     stats = await db.get_stats(callback.from_user.id)
     u = stats["user"]
     bar = progress_bar(stats["known"], max(stats["total_words"], 1))
+    levels_str = ", ".join(u["levels"] or [])
     text = (
         "<b>📊 Твоя статистика</b>\n\n"
         f"🔥 Текущий streak: <b>{u['streak']}</b> дней\n"
         f"🏆 Лучший streak: <b>{u['longest_streak']}</b> дней\n"
         f"⭐️ Всего XP: <b>{u['xp']}</b>\n"
-        f"📚 Уровень: <b>{u['level']}</b>\n\n"
+        f"📚 Уровни: <b>{levels_str}</b>\n\n"
         f"📗 Выучено (закреплено): <b>{stats['known']}</b>\n"
         f"📖 В процессе изучения: <b>{stats['learning']}</b>\n"
-        f"📕 Всего слов в базе: <b>{stats['total_words']}</b>\n"
+        f"📕 Всего слов в базе (по твоим уровням): <b>{stats['total_words']}</b>\n"
         f"{bar}\n\n"
         f"⏰ Слов ждут повторения прямо сейчас: <b>{stats['due_now']}</b>"
     )
@@ -60,13 +62,17 @@ async def show_stats(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "mode:settings")
-async def show_settings(callback: CallbackQuery):
+async def show_settings_text(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
     await callback.message.edit_text(
-        "<b>⚙️ Настройки</b>\n\nЗдесь можно отключить напоминания или сменить уровень слов.",
+        "<b>⚙️ Настройки</b>\n\nЗдесь можно отключить напоминания или изменить набор уровней слов.",
         reply_markup=settings_kb(user["reminders_enabled"]),
     )
+
+
+@router.callback_query(F.data == "mode:settings")
+async def show_settings(callback: CallbackQuery):
+    await show_settings_text(callback)
     await callback.answer()
 
 
@@ -81,5 +87,9 @@ async def toggle_reminders(callback: CallbackQuery):
 
 @router.callback_query(F.data == "change_level")
 async def change_level(callback: CallbackQuery):
-    await callback.message.edit_text("Выбери новый уровень слов:", reply_markup=level_kb())
+    user = await db.get_user(callback.from_user.id)
+    await callback.message.edit_text(
+        "Отметь нужные уровни (можно несколько) и жми «Готово»:",
+        reply_markup=level_multiselect_kb(user["levels"], "settings"),
+    )
     await callback.answer()

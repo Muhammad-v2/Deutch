@@ -22,7 +22,7 @@ def render_progress(target: str, typed: str) -> str:
 
 async def new_word(callback: CallbackQuery, state: FSMContext):
     user = await db.get_user(callback.from_user.id)
-    words = await db.get_due_words(callback.from_user.id, user["level"], limit=1)
+    words = await db.get_due_words(callback.from_user.id, user["levels"], limit=1)
     if not words:
         await callback.message.edit_text(
             "🎉 Все слова на сегодня повторены! Загляни попозже 💪", reply_markup=main_menu_kb()

@@ -11,7 +11,7 @@ POS_EMOJI = {"n": "📦", "v": "🏃", "adj": "🎨", "adv": "➡️", "other": 
 
 async def send_next_card(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    words = await db.get_due_words(callback.from_user.id, user["level"], limit=1)
+    words = await db.get_due_words(callback.from_user.id, user["levels"], limit=1)
     if not words:
         await callback.message.edit_text(
             "🎉 <b>Вау! На сегодня все карточки повторены!</b>\n\n"

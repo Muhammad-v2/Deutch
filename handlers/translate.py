@@ -12,7 +12,7 @@ router = Router()
 
 async def ask_word(callback_or_msg, state: FSMContext, user_id: int):
     user = await db.get_user(user_id)
-    words = await db.get_due_words(user_id, user["level"], limit=1)
+    words = await db.get_due_words(user_id, user["levels"], limit=1)
     if not words:
         await callback_or_msg.answer(
             "🎉 Все слова на сегодня повторены! Загляни попозже 💪", reply_markup=main_menu_kb()
