@@ -142,6 +142,7 @@ async function renderProfile() {
     const me = await api("/api/me");
     state.me = me;
     const u = me.user;
+    const levels = u.levels || [];
     root.innerHTML = `
       <h2 style="margin-bottom:16px;">🪪 Профиль</h2>
       <div class="stat-grid">
@@ -151,9 +152,9 @@ async function renderProfile() {
         <div class="stat-card"><div class="stat-value">${me.known}</div><div class="stat-label">Слов выучено</div></div>
       </div>
 
-      <div class="section-label">Уровень словаря</div>
+      <div class="section-label">Уровни словаря (можно несколько)</div>
       <div class="level-grid" id="level-grid">
-        ${["A1", "A2", "B1", "B2"].map((lvl) => `<button class="level-chip ${u.level === lvl ? "active" : ""}" data-level="${lvl}">${lvl}</button>`).join("")}
+        ${["A1", "A2", "B1", "B2"].map((lvl) => `<button class="level-chip ${levels.includes(lvl) ? "active" : ""}" data-level="${lvl}">${levels.includes(lvl) ? "✅ " : ""}${lvl}</button>`).join("")}
       </div>
 
       <div class="section-label">Настройки</div>
@@ -165,7 +166,7 @@ async function renderProfile() {
     root.querySelectorAll("[data-level]").forEach((el) => {
       el.addEventListener("click", async () => {
         haptic("light");
-        await api("/api/level", { method: "POST", body: JSON.stringify({ level: el.dataset.level }) });
+        await api("/api/levels/toggle", { method: "POST", body: JSON.stringify({ level: el.dataset.level }) });
         renderProfile();
       });
     });
