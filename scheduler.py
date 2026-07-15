@@ -1,24 +1,26 @@
 import random
-from datetime import date
+from datetime import date, datetime, timezone
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 import database as db
-from config import REMINDER_HOURS_UTC, DAILY_GOAL
+from config import REMINDER_INTERVAL_MINUTES, QUIET_HOURS_UTC_START, QUIET_HOURS_UTC_END, DAILY_GOAL
 from keyboards import main_menu_kb
 
 NAG_MESSAGES = [
     "👋 Привет! Пара минут — и ты станешь чуточку ближе к свободному немецкому. Заглянешь?",
     "🧠 Мозг забывает новое уже через несколько часов. Повтори слова, пока не поздно!",
     "📚 Твои карточки заскучали без тебя. Загляни, разомнись немного 🇩🇪",
-    "⏳ Всего 5 минут в день — и через месяц ты не узнаешь свой немецкий. Начни сейчас!",
-    "🎯 Маленький шаг сегодня = большой словарный запас завтра. Погнали?",
+    "⏳ Всего 5 минут — и через месяц ты не узнаешь свой немецкий. Начни сейчас!",
+    "🎯 Маленький шаг сейчас = большой словарный запас завтра. Погнали?",
     "😴 Слова не выучатся сами. Загляни на минутку!",
     "🔥 Не дай своему прогрессу остыть — повтори пару карточек прямо сейчас.",
     "💬 Как сказать это по-немецки? Проверь себя — открой бота!",
+    "⌛ Всего 2 минуты — и ещё пара слов осядет в памяти надолго.",
+    "🎮 Мини-игра на 60 секунд? Загляни, разомнись.",
 ]
 
 STREAK_RISK_MESSAGES = [
@@ -42,7 +44,19 @@ def build_reminder_text(user: dict) -> str:
     return random.choice(NAG_MESSAGES)
 
 
+def in_quiet_hours(now: datetime) -> bool:
+    hour = now.hour
+    start, end = QUIET_HOURS_UTC_START, QUIET_HOURS_UTC_END
+    if start > end:  # окно переходит через полночь, напр. 21 -> 5
+        return hour >= start or hour < end
+    return start <= hour < end
+
+
 async def send_reminders(bot: Bot):
+    now = datetime.now(timezone.utc)
+    if in_quiet_hours(now):
+        return
+
     users = await db.get_users_for_reminder()
     today = date.today()
     for u in users:
@@ -61,12 +75,11 @@ async def send_reminders(bot: Bot):
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
-    for hour in REMINDER_HOURS_UTC:
-        scheduler.add_job(
-            send_reminders,
-            trigger=CronTrigger(hour=hour, minute=0),
-            args=[bot],
-            id=f"reminder_{hour}",
-            replace_existing=True,
-        )
+    scheduler.add_job(
+        send_reminders,
+        trigger=IntervalTrigger(minutes=REMINDER_INTERVAL_MINUTES),
+        args=[bot],
+        id="reminder_interval",
+        replace_existing=True,
+    )
     return scheduler

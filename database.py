@@ -1,10 +1,11 @@
 import asyncpg
-import random
 from datetime import datetime, timedelta, date
 
 from config import DATABASE_URL
 
 pool: asyncpg.Pool | None = None
+
+ALL_LEVELS = ["A1", "A2", "B1", "B2"]
 
 # Интервалы для системы Лейтнера (box -> через сколько показать снова)
 BOX_INTERVALS = {
@@ -75,6 +76,19 @@ async def create_schema():
         CREATE INDEX IF NOT EXISTS idx_words_level ON words(level);
         """)
 
+        # ---- Миграция: мульти-уровни вместо одного уровня + флаг онбординга ----
+        # onboarded по умолчанию TRUE — это применится к уже существующим строкам
+        # (они уже проходили выбор уровня раньше). Новых юзеров создаём с onboarded=FALSE явно.
+        await con.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS levels TEXT[] DEFAULT ARRAY['A1','A2','B1','B2'];
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded BOOLEAN DEFAULT TRUE;
+        """)
+        # для старых строк, где levels мог остаться NULL/пустым — переносим старый level в массив
+        await con.execute("""
+            UPDATE users SET levels = ARRAY[level]
+            WHERE (levels IS NULL OR array_length(levels, 1) IS NULL) AND level IS NOT NULL;
+        """)
+
 
 async def seed_words(word_list: list[dict]):
     async with pool.acquire() as con:
@@ -94,16 +108,31 @@ async def get_or_create_user(user_id: int, username: str, first_name: str):
         if user:
             return dict(user)
         await con.execute(
-            "INSERT INTO users (user_id, username, first_name) VALUES ($1,$2,$3)",
-            user_id, username, first_name,
+            """INSERT INTO users (user_id, username, first_name, levels, onboarded)
+               VALUES ($1,$2,$3,$4,FALSE)""",
+            user_id, username, first_name, ["A2", "B1"],
         )
         user = await con.fetchrow("SELECT * FROM users WHERE user_id=$1", user_id)
         return dict(user)
 
 
-async def set_level(user_id: int, level: str):
+async def toggle_level(user_id: int, level: str) -> list[str]:
+    """Переключает уровень в мультивыборе юзера. Не даёт снять последний оставшийся уровень."""
     async with pool.acquire() as con:
-        await con.execute("UPDATE users SET level=$1 WHERE user_id=$2", level, user_id)
+        user = await con.fetchrow("SELECT levels FROM users WHERE user_id=$1", user_id)
+        levels = list(user["levels"] or [])
+        if level in levels:
+            if len(levels) > 1:
+                levels.remove(level)
+        else:
+            levels.append(level)
+        await con.execute("UPDATE users SET levels=$1 WHERE user_id=$2", levels, user_id)
+        return levels
+
+
+async def set_onboarded(user_id: int):
+    async with pool.acquire() as con:
+        await con.execute("UPDATE users SET onboarded=TRUE WHERE user_id=$1", user_id)
 
 
 async def get_user(user_id: int):
@@ -139,13 +168,10 @@ async def touch_streak(user_id: int):
         return words_today, new_streak
 
 
-async def add_xp(user_id: int, amount: int):
-    async with pool.acquire() as con:
-        await con.execute("UPDATE users SET xp = xp + $1 WHERE user_id=$2", amount, user_id)
-
-
-async def get_due_words(user_id: int, level: str, limit: int = 10):
-    """Слова к повторению: сначала новые (нет в progress), потом просроченные по Лейтнеру."""
+async def get_due_words(user_id: int, levels: list[str], limit: int = 10):
+    """Слова к повторению по выбранным юзером уровням: сначала новые, потом просроченные по Лейтнеру."""
+    if not levels:
+        levels = ALL_LEVELS
     async with pool.acquire() as con:
         rows = await con.fetch(
             """
@@ -154,7 +180,7 @@ async def get_due_words(user_id: int, level: str, limit: int = 10):
             WHERE w.level = ANY($2::text[]) AND p.word_id IS NULL
             ORDER BY random() LIMIT $3
             """,
-            user_id, level_range(level), limit,
+            user_id, levels, limit,
         )
         new_words = [dict(r) for r in rows]
         if len(new_words) >= limit:
@@ -168,22 +194,18 @@ async def get_due_words(user_id: int, level: str, limit: int = 10):
             WHERE p.next_review <= now() AND w.level = ANY($2::text[])
             ORDER BY p.next_review ASC LIMIT $3
             """,
-            user_id, level_range(level), remaining,
+            user_id, levels, remaining,
         )
         return new_words + [dict(r) for r in rows2]
 
 
-def level_range(level: str) -> list[str]:
-    order = ["A1", "A2", "B1", "B2"]
-    idx = order.index(level) if level in order else 2
-    return order[: idx + 1]  # текущий уровень и всё что ниже — для повторения база + новые слова уровня
-
-
-async def get_random_words(level: str, exclude_id: int, n: int = 3):
+async def get_random_words(levels: list[str], exclude_id: int, n: int = 3):
+    if not levels:
+        levels = ALL_LEVELS
     async with pool.acquire() as con:
         rows = await con.fetch(
             "SELECT * FROM words WHERE level = ANY($1::text[]) AND id != $2 ORDER BY random() LIMIT $3",
-            level_range(level), exclude_id, n,
+            levels, exclude_id, n,
         )
         return [dict(r) for r in rows]
 
@@ -219,15 +241,24 @@ async def record_answer(user_id: int, word_id: int, correct: bool):
 async def get_stats(user_id: int):
     async with pool.acquire() as con:
         user = await con.fetchrow("SELECT * FROM users WHERE user_id=$1", user_id)
+        levels = user["levels"] or ALL_LEVELS
         known = await con.fetchval(
-            "SELECT count(*) FROM progress WHERE user_id=$1 AND box >= 4", user_id
+            """SELECT count(*) FROM progress p JOIN words w ON w.id = p.word_id
+               WHERE p.user_id=$1 AND p.box >= 4 AND w.level = ANY($2::text[])""",
+            user_id, levels,
         )
         learning = await con.fetchval(
-            "SELECT count(*) FROM progress WHERE user_id=$1 AND box < 4", user_id
+            """SELECT count(*) FROM progress p JOIN words w ON w.id = p.word_id
+               WHERE p.user_id=$1 AND p.box < 4 AND w.level = ANY($2::text[])""",
+            user_id, levels,
         )
-        total_words = await con.fetchval("SELECT count(*) FROM words")
+        total_words = await con.fetchval(
+            "SELECT count(*) FROM words WHERE level = ANY($1::text[])", levels
+        )
         due_now = await con.fetchval(
-            "SELECT count(*) FROM progress WHERE user_id=$1 AND next_review <= now()", user_id
+            """SELECT count(*) FROM progress p JOIN words w ON w.id = p.word_id
+               WHERE p.user_id=$1 AND p.next_review <= now() AND w.level = ANY($2::text[])""",
+            user_id, levels,
         )
         return {
             "user": dict(user),
@@ -266,7 +297,7 @@ async def get_users_for_reminder():
     async with pool.acquire() as con:
         rows = await con.fetch(
             """SELECT user_id, first_name, streak, words_today, last_study_date
-               FROM users WHERE reminders_enabled = TRUE"""
+               FROM users WHERE reminders_enabled = TRUE AND onboarded = TRUE"""
         )
         return [dict(r) for r in rows]
 
@@ -275,10 +306,11 @@ async def record_answer_and_stats(user_id: int, word_id: int, correct: bool) -> 
     """Как record_answer, но сразу возвращает свежие xp/streak/known — удобно для мини-аппа."""
     await record_answer(user_id, word_id, correct)
     user = await get_user(user_id)
-    known = None
     async with pool.acquire() as con:
         known = await con.fetchval(
-            "SELECT count(*) FROM progress WHERE user_id=$1 AND box >= 4", user_id
+            """SELECT count(*) FROM progress p JOIN words w ON w.id = p.word_id
+               WHERE p.user_id=$1 AND p.box >= 4 AND w.level = ANY($2::text[])""",
+            user_id, user["levels"] or ALL_LEVELS,
         )
     return {
         "xp": user["xp"],

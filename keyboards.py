@@ -22,11 +22,15 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def level_kb() -> InlineKeyboardMarkup:
+def level_multiselect_kb(selected: list[str], context: str) -> InlineKeyboardMarkup:
+    """context: 'onboard' (первый выбор) или 'settings' (смена в профиле) — влияет на кнопку "Готово" """
     b = InlineKeyboardBuilder()
-    for lvl, desc in [("A1", "начинающий"), ("A2", "элементарный"), ("B1", "средний"), ("B2", "выше среднего")]:
-        b.button(text=f"{lvl} — {desc}", callback_data=f"level:{lvl}")
-    b.adjust(2, 2)
+    descriptions = {"A1": "начинающий", "A2": "элементарный", "B1": "средний", "B2": "выше среднего"}
+    for lvl in ["A1", "A2", "B1", "B2"]:
+        mark = "✅ " if lvl in selected else "⬜ "
+        b.button(text=f"{mark}{lvl} — {descriptions[lvl]}", callback_data=f"lvl_toggle:{lvl}:{context}")
+    b.button(text="✅ Готово", callback_data=f"lvl_done:{context}")
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 

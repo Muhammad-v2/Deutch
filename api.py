@@ -53,15 +53,15 @@ async def api_me(request: web.Request):
     }))
 
 
-@routes.post("/api/level")
-async def api_set_level(request: web.Request):
+@routes.post("/api/levels/toggle")
+async def api_toggle_level(request: web.Request):
     tg_user = request["tg_user"]
     body = await request.json()
     level = body.get("level")
     if level not in ("A1", "A2", "B1", "B2"):
         return cors(web.json_response({"error": "bad level"}, status=400))
-    await db.set_level(tg_user["id"], level)
-    return cors(web.json_response({"ok": True}))
+    levels = await db.toggle_level(tg_user["id"], level)
+    return cors(web.json_response({"levels": levels}))
 
 
 @routes.get("/api/words/due")
@@ -69,7 +69,7 @@ async def api_words_due(request: web.Request):
     tg_user = request["tg_user"]
     limit = int(request.query.get("limit", 1))
     user = await db.get_user(tg_user["id"])
-    words = await db.get_due_words(tg_user["id"], user["level"], limit=limit)
+    words = await db.get_due_words(tg_user["id"], user["levels"], limit=limit)
     return cors(web.json_response({"words": [jsonify_row(w) for w in words]}))
 
 
@@ -77,11 +77,11 @@ async def api_words_due(request: web.Request):
 async def api_quiz_question(request: web.Request):
     tg_user = request["tg_user"]
     user = await db.get_user(tg_user["id"])
-    words = await db.get_due_words(tg_user["id"], user["level"], limit=1)
+    words = await db.get_due_words(tg_user["id"], user["levels"], limit=1)
     if not words:
         return cors(web.json_response({"done": True}))
     word = words[0]
-    distractors = await db.get_random_words(user["level"], word["id"], n=3)
+    distractors = await db.get_random_words(user["levels"], word["id"], n=3)
     if len(distractors) < 3:
         return cors(web.json_response({"done": True}))
     options = [{"text": word["ru"], "correct": True}] + [
@@ -97,7 +97,7 @@ async def api_quiz_question(request: web.Request):
 async def api_scramble_word(request: web.Request):
     tg_user = request["tg_user"]
     user = await db.get_user(tg_user["id"])
-    words = await db.get_due_words(tg_user["id"], user["level"], limit=1)
+    words = await db.get_due_words(tg_user["id"], user["levels"], limit=1)
     if not words:
         return cors(web.json_response({"done": True}))
     w = words[0]
@@ -146,9 +146,9 @@ async def api_answer(request: web.Request):
 async def api_matching_session(request: web.Request):
     tg_user = request["tg_user"]
     user = await db.get_user(tg_user["id"])
-    words = await db.get_due_words(tg_user["id"], user["level"], limit=6)
+    words = await db.get_due_words(tg_user["id"], user["levels"], limit=6)
     if len(words) < 6:
-        extra = await db.get_random_words(user["level"], -1, n=6 - len(words))
+        extra = await db.get_random_words(user["levels"], -1, n=6 - len(words))
         words += extra
     words = words[:6]
     return cors(web.json_response({"words": [jsonify_row(w) for w in words]}))
